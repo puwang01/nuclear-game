@@ -1,0 +1,618 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>核战 · 10 分钟 MVP</title>
+<style>
+:root{--bg:#07090c;--fg:#c8d0da;--dim:#5a6472;--hot:#ff4d3d;--warn:#ffb020;--ok:#3ddc97;--line:#1b2430}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+ font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;overflow:hidden;user-select:none}
+canvas{display:block;position:absolute;inset:0}
+.hud{position:absolute;pointer-events:none}
+#tl{top:14px;left:16px}
+#tr{top:14px;right:16px;text-align:right}
+#bl{bottom:14px;left:16px;line-height:1.7}
+#br{bottom:14px;right:16px;text-align:right}
+.big{font-size:22px;letter-spacing:1px}
+.dim{color:var(--dim)}
+.hot{color:var(--hot)}
+.warn{color:var(--warn)}
+.ok{color:var(--ok)}
+#bar{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);display:flex;gap:8px}
+.wbtn{pointer-events:auto;cursor:pointer;border:1px solid var(--line);background:#0d1218;
+ padding:8px 14px;border-radius:6px;color:var(--fg);min-width:104px;transition:.12s}
+.wbtn:hover{border-color:#33465c;background:#121a22}
+.wbtn.sel{border-color:var(--hot);box-shadow:0 0 0 1px var(--hot) inset}
+.wbtn.dis{opacity:.32;cursor:not-allowed}
+.wbtn b{display:block;font-size:12px}
+.wbtn span{font-size:11px;color:var(--dim)}
+#esc{width:180px;height:6px;background:#131a22;border-radius:3px;overflow:hidden;margin-top:6px;margin-left:auto}
+#escf{height:100%;width:0;background:linear-gradient(90deg,var(--ok),var(--warn),var(--hot));transition:width .3s}
+#modal{position:absolute;inset:0;background:rgba(4,6,9,.94);display:flex;align-items:center;justify-content:center}
+#modal.hide{display:none}
+.card{width:min(760px,92vw);border:1px solid var(--line);border-radius:10px;padding:26px 30px;background:#0a0e13}
+h1{margin:0 0 4px;font-size:20px;letter-spacing:2px}
+h2{margin:0 0 14px;font-size:13px;color:var(--dim);font-weight:400}
+.row{display:flex;gap:10px;margin:14px 0;flex-wrap:wrap}
+.opt{cursor:pointer;border:1px solid var(--line);padding:9px 16px;border-radius:6px;transition:.12s}
+.opt:hover{border-color:#33465c}
+.opt.sel{border-color:var(--hot);color:#fff}
+.opt small{display:block;color:var(--dim);font-size:11px}
+#go{margin-top:22px;width:100%;padding:12px;border:1px solid var(--hot);background:#1a0806;color:var(--hot);
+ border-radius:6px;cursor:pointer;font:inherit;letter-spacing:2px}
+#go:hover{background:var(--hot);color:#0a0e13}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px}
+td{padding:4px 8px;border-bottom:1px solid #131a22}
+td:last-child{text-align:right}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div class="hud" id="tl">
+  <div class="big" id="phase">部署</div>
+  <div class="dim"><span id="clock">10:00</span> · 倍率 <span id="mult">×300</span></div>
+  <div id="spd" style="margin-top:6px">
+    <span class="sp" data-s="1" style="cursor:pointer;pointer-events:auto">×1</span>
+    <span class="sp" data-s="2" style="cursor:pointer;pointer-events:auto">×2</span>
+    <span class="sp" data-s="4" style="cursor:pointer;pointer-events:auto">×4</span>
+    <span class="sp" data-s="8" style="cursor:pointer;pointer-events:auto">×8</span>
+  </div>
+</div>
+
+<div class="hud" id="tr">
+  <div class="dim">全球升级值</div>
+  <div class="big" id="escv">0</div>
+  <div id="esc"><div id="escf"></div></div>
+  <div id="inc" style="margin-top:8px;color:#ff4d3d"></div>
+</div>
+
+<div class="hud" id="bl">
+  <div>战略弹 <b id="ws">0</b> · 战术弹 <b id="wt">0</b> · 拦截弹 <b id="wi">0</b></div>
+  <div class="dim">民防 <span id="wc">0</span>% · 城市 <span id="wcity">0</span> · 伤亡 <span id="wcas">0</span></div>
+</div>
+
+<div id="tip" style="position:absolute;pointer-events:none;display:none;
+  padding:4px 8px;background:#0d1218;border:1px solid #263243;border-radius:5px;font-size:11px;z-index:5"></div>
+<div class="hud" id="br">
+  <div class="dim" style="line-height:1.9">
+    <span style="color:#7fb2ff">●</span> 城市　<span style="color:#c9a227">●</span> 军事基地　<span style="color:#6b7a8d">●</span> 工业
+    <div class="dim" id="hint">点击武器 → 点击目标</div>
+  </div>
+</div>
+<div id="bar"></div>
+
+<div id="modal">
+  <div class="card" id="card"></div>
+</div>
+
+<script>
+"use strict";
+// ============================================================ CONFIG
+const CFG = {
+  ROUND: 600,
+  BUDGET: 150,
+  COST: {strategic:5, tactical:2, interceptor:3, civil:1},
+  YIELD:{strategic:400, tactical:20},
+  FLIGHT:{strategic:90, tactical:35},
+  RANGE:{strategic:1e9, tactical:600},
+  CEP:{strategic:300, tactical:200},
+  IPK:0.6, RELIABILITY:0.85,
+  CITY_R:8000,
+  DWELL:45,              // 升级冷却：每升一级至少停留 45 真实秒
+  PHASES:[
+    {t:0,   name:"部署", mult:300},
+    {t:30,  name:"危机", mult:30},
+    {t:150, name:"交换", mult:1},
+    {t:480, name:"清算", mult:1},
+    {t:570, name:"结算", mult:0}
+  ],
+  PRESETS:{
+    balanced:{strategic:15, tactical:15, interceptor:10, civil:10, label:"均衡", desc:"15 战略 / 15 战术 / 10 拦截 / 民防 10%"},
+    strike:  {strategic:20, tactical:20, interceptor:0,  civil:5,  label:"打击", desc:"20 战略 / 20 战术 / 无拦截 / 民防 5%"},
+    fortress:{strategic:10, tactical:8,  interceptor:20, civil:20, label:"堡垒", desc:"10 战略 / 8 战术 / 20 拦截 / 民防 20%"}
+  }
+};
+
+// ============================================================ PHYSICS
+const lethalR = (y,h) => 4600*Math.cbrt(y/1000)*Math.cbrt(5/h);
+const pkSingle = (R,cep) => 1-Math.exp(-0.5*Math.pow(R/cep,2));
+
+// ============================================================ STATE
+const S = {
+  t:0, last:0, running:false, ended:false, raf:0,
+  escalation:0, level:0, lastUp:-999, casualties:0, toast:"", toastT:0,
+  countries:[], missiles:[], flashes:[],
+  N:8, preset:"balanced", sel:null, player:null, mapR:1000,
+  started:false, speed:1
+};
+
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+let W=0,H=0,DPR=1;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio||1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = W*DPR; cv.height = H*DPR;
+  cv.style.width = W+"px"; cv.style.height = H+"px";
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener("resize", resize); resize();
+
+const NAMES = ["赤","蓝","青","黄","白","黑","紫","橙","灰","褐",
+               "银","棕","翠","丹","碧","墨","霜","炎","岚","岚2",
+               "星","岩","潮","峰","雾","焰","渊","极","曙","暮",
+               "砂","岭","涛","穹","森","泽","曦","霆","垠","焰2"];
+
+// ============================================================ WORLD
+function genWorld(N, preset){
+  const ringR = Math.max(300, 520*N/(2*Math.PI));
+  const cs = [];
+  for(let i=0;i<N;i++){
+    const a = (i/N)*Math.PI*2 - Math.PI/2;
+    const p = {x:Math.cos(a)*ringR, y:Math.sin(a)*ringR};
+    const pl = CFG.PRESETS[preset];
+    const c = {
+      id:i, name:NAMES[i%NAMES.length], human:i===0,
+      pos:p, alive:true, aggro:0,
+      strategic:pl.strategic, tactical:pl.tactical,
+      interceptor:pl.interceptor, civil:pl.civil,
+      nodes:[], aiTimer: 55 + Math.random()*90
+    };
+    // 4 nodes per country: 2 cities, 1 military, 1 industry
+    const kinds = ["city","city","military","industry"];
+    kinds.forEach((k,j)=>{
+      const na = a + (j-1.5)*0.34 + 0.12;
+      const nr = 78 + Math.random()*34;
+      const node = {
+        id:i+"-"+j, type:k, owner:i, alive:true,
+        pos:{x:p.x+Math.cos(na)*nr, y:p.y+Math.sin(na)*nr},
+        pop: k==="city" ? 2e6+Math.random()*4e6 : 0
+      };
+      c.nodes.push(node);
+    });
+    cs.push(c);
+  }
+  S.countries = cs;
+  S.player = cs[0];
+  S.mapR = ringR*1.45;
+  return cs;
+}
+
+// ============================================================ HELPERS
+const phaseAt = t => { let p=CFG.PHASES[0]; for(const q of CFG.PHASES) if(t>=q.t) p=q; return p; };
+const dist = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
+
+function toScreen(p){
+  const scale = Math.min(W,H)*0.40 / S.mapR;
+  return {x: W/2 + p.x*scale, y: H/2 + p.y*scale, s: scale};
+}
+
+// ============================================================ ESCALATION
+const shotLevel = (node, kind) =>
+  node.type==="city" ? 4 : node.type==="industry" ? 3 : (kind==="strategic" ? 2 : 1);
+
+function gate(node, kind, t, level, lastUp){
+  const L = shotLevel(node, kind);
+  if(L <= level) return null;
+  if(L > level + 1) return "必须逐级升级（当前 " + level + " 级 → 下一级 " + (level+1) + "）";
+  if(node.type==="city" && level < 3) return "城市目标需先升到 3 级";
+  const left = CFG.DWELL - (t - lastUp);
+  if(left > 0) return "升级冷却 " + Math.ceil(left) + "s";
+  return null;
+}
+
+// ============================================================ FIRING
+function canFire(from, node, kind){
+  if(!from || !from.alive) return "你已被摧毁";
+  if(!node.alive) return "目标已被摧毁";
+  if(node.owner === from.id) return "不能打自己";
+  if(from[kind] <= 0) return "没有" + (kind==="strategic"?"战略弹":"战术弹");
+  if(dist(from.pos, node.pos) > CFG.RANGE[kind]) return "超出身程";
+  return gate(node, kind, S.t, S.level, S.lastUp);
+}
+
+function fire(from, node, kind){
+  const err = canFire(from, node, kind);
+  if(err) return err;
+  from[kind]--;
+  const enemy = S.countries[node.owner];
+  const L = shotLevel(node, kind);
+  if(L > S.level){ S.level = L; S.lastUp = S.t; S.escalation = L*25; }
+
+  let intercepted = false;
+  if(kind === "strategic" && enemy.interceptor > 0){
+    enemy.interceptor--;
+    if(Math.random() < CFG.IPK) intercepted = true;
+  }
+
+  S.missiles.push({
+    from:{x:from.pos.x,y:from.pos.y}, to:node,
+    kind, launch:S.t, flight:CFG.FLIGHT[kind],
+    fromId:from.id, intercepted, done:false, hit:false
+  });
+  return null;
+}
+
+// ============================================================ RESOLVE
+function resolveImpact(m){
+  const node = m.to;
+  if(!node.alive){ m.done = true; return; }
+  const enemy = S.countries[node.owner];
+
+  if(m.intercepted){
+    S.flashes.push({x:node.pos.x, y:node.pos.y, r:0, max:26, life:0.7, t:0, kind:"i"});
+    m.done = true; return;
+  }
+
+  const ok = Math.random() < CFG.RELIABILITY;
+  const Y = CFG.YIELD[m.kind];
+  const cep = CFG.CEP[m.kind];
+
+  if(node.type === "city"){
+    const R = lethalR(Y, 5);
+    const frac = Math.min(1, Math.pow(R/CFG.CITY_R, 2));
+    const dead = Math.round(node.pop * frac * 0.7 * (1 - enemy.civil/100*0.6) * (ok?1:0.3));
+    S.casualties += dead;
+    S.flashes.push({x:node.pos.x, y:node.pos.y, r:0, max: R/CFG.CITY_R*90, t:0, life:1.2, kind:"n"});
+    if(ok) node.alive = false;
+    enemy.aggro += 3;
+  } else if(node.type === "military"){
+    const R = lethalR(Y, 2000);
+    const p = pkSingle(R, cep) * (ok?1:0.4);
+    S.flashes.push({x:node.pos.x, y:node.pos.y, r:0, max:34, t:0, life:0.9, kind:"n"});
+    if(Math.random() < p){
+      node.alive = false;
+      const lost = Math.floor(enemy.strategic*0.3);
+      enemy.strategic -= lost;
+      enemy.aggro += 2;
+      if(enemy.human && lost>0){ S.toast = "⚠ 军事基地被毁，损失 " + lost + " 枚战略弹"; S.toastT = 3; }
+    }
+  } else {
+    const R = lethalR(Y, 100);
+    const p = pkSingle(R, cep) * (ok?1:0.4);
+    S.flashes.push({x:node.pos.x, y:node.pos.y, r:0, max:30, t:0, life:0.9, kind:"n"});
+    if(Math.random() < p) node.alive = false;
+  }
+  m.done = true;
+  checkAlive(enemy);
+}
+
+function checkAlive(c){
+  if(!c.alive) return;
+  if(!c.nodes.some(n=>n.alive)){
+    c.alive = false;
+    S.flashes.push({x:c.pos.x, y:c.pos.y, r:0, max:70, t:0, life:2, kind:"d"});
+  }
+}
+
+// ============================================================ AI
+function aiTick(c, dt){
+  if(!c.alive || !S.started) return;
+  c.aiTimer -= dt;
+  if(c.aiTimer > 0) return;
+  c.aiTimer = 13 + Math.random()*14;
+
+  const enemies = S.countries.filter(x=>x.alive && x.id!==c.id);
+  if(!enemies.length) return;
+
+  // target country: nearest, biased by aggro
+  let best=null, bs=-1e9;
+  for(const e of enemies){
+    const d = dist(c.pos, e.pos);
+    const score = -d/500 + e.aggro*40 + Math.random()*30;
+    if(score>bs){bs=score;best=e;}
+  }
+  if(!best) return;
+
+  const nodes = best.nodes.filter(n=>n.alive);
+  if(!nodes.length) return;
+
+  // choose kind first, then matching node
+  const wantCity = S.level >= 3 && Math.random() < 0.18 + S.level*0.08 + best.aggro*0.05;
+  const cities = nodes.filter(n=>n.type==="city");
+  const others = nodes.filter(n=>n.type!=="city");
+  const pool = (wantCity && cities.length) ? cities : (others.length?others:nodes);
+  const node = pool[Math.floor(Math.random()*pool.length)];
+
+  let kind = null;
+  if(dist(c.pos,node.pos) <= CFG.RANGE.tactical && c.tactical>0) kind="tactical";
+  else if(c.strategic>0) kind="strategic";
+  else if(c.tactical>0 && dist(c.pos,node.pos) <= CFG.RANGE.tactical) kind="tactical";
+
+  if(!kind) return;
+  if(!canFire(c, node, kind)){ fire(c, node, kind); return; }
+  // 选中的目标被升级闸门挡住 → 退而求其次打最弱的合法目标
+  for(const n of nodes){
+    const k = dist(c.pos,n.pos) <= CFG.RANGE.tactical && c.tactical>0 ? "tactical" : "strategic";
+    if(!canFire(c, n, k)){ fire(c, n, k); return; }
+  }
+}
+
+// ============================================================ LOOP
+function tick(ts){
+  if(!S.running) return;
+  const now = ts/1000;
+  let dt = S.last ? now - S.last : 0;
+  S.last = now;
+  dt = Math.min(dt, 0.1) * S.speed;
+
+  S.t += dt;
+  if(S.t >= CFG.ROUND){ endRound(); return; }
+
+  // missiles
+  for(const m of S.missiles){
+    if(m.done) continue;
+    const p = (S.t - m.launch) / m.flight;
+    if(p >= 1) resolveImpact(m);
+  }
+  // flashes
+  for(const f of S.flashes){ f.t += dt; }
+  S.flashes = S.flashes.filter(f=>f.t < f.life);
+  S.missiles = S.missiles.filter(m=>!m.done || (S.t-m.launch-m.flight) < 1.5);
+
+  // AI
+  for(const c of S.countries) aiTick(c, dt);
+
+  render();
+  updateHUD();
+  S.raf = requestAnimationFrame(tick);
+}
+
+// ============================================================ RENDER
+function render(){
+  ctx.clearRect(0,0,W,H);
+
+  const {x:cx,y:cy,s:scale} = toScreen({x:0,y:0});
+
+  // world ring
+  ctx.beginPath();
+  ctx.arc(cx, cy, S.mapR*scale, 0, Math.PI*2);
+  ctx.strokeStyle = "#141d27"; ctx.lineWidth = 1; ctx.stroke();
+
+  // range rings for player tactical
+  if(S.sel){
+    const r = CFG.RANGE[S.sel]*scale;
+    ctx.beginPath(); ctx.arc(cx + S.player.pos.x*scale, cy + S.player.pos.y*scale, r, 0, Math.PI*2);
+    ctx.strokeStyle = "rgba(255,77,61,.18)"; ctx.setLineDash([4,6]); ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  // countries + nodes
+  for(const c of S.countries){
+    const p = toScreen(c.pos);
+    if(!c.alive){
+      ctx.fillStyle = "#2a323c";
+      ctx.beginPath(); ctx.arc(p.x,p.y,3,0,7); ctx.fill();
+      continue;
+    }
+    // country marker
+    ctx.beginPath(); ctx.arc(p.x,p.y, c.human?6:4, 0, 7);
+    ctx.fillStyle = c.human ? "#3ddc97" : "#4a5568";
+    ctx.fill();
+    if(c.human){
+      ctx.beginPath(); ctx.arc(p.x,p.y,12,0,7);
+      ctx.strokeStyle = "rgba(61,220,151,.4)"; ctx.stroke();
+    }
+    ctx.fillStyle = c.human ? "#3ddc97" : "#5a6472";
+    ctx.font = "10px ui-monospace,monospace"; ctx.textAlign="center";
+    ctx.fillText(c.name, p.x, p.y + (c.human?24:18));
+
+    for(const n of c.nodes){
+      const np = toScreen(n.pos);
+      const rad = n.type==="city" ? 4.5 : n.type==="military" ? 3.5 : 3;
+      ctx.beginPath(); ctx.arc(np.x, np.y, rad, 0, 7);
+      if(!n.alive){ ctx.fillStyle="#1d242c"; }
+      else if(n.type==="city"){ ctx.fillStyle= c.human?"#7fb2ff":"#8fa2b8"; }
+      else if(n.type==="military"){ ctx.fillStyle = c.human?"#3ddc97":"#c9a227"; }
+      else { ctx.fillStyle="#6b7a8d"; }
+      ctx.fill();
+    }
+  }
+
+  // missiles
+  for(const m of S.missiles){
+    if(m.done) continue;
+    const p = (S.t - m.launch) / m.flight;
+    const a = toScreen(m.from), b = toScreen(m.to.pos);
+    const mx = a.x + (b.x-a.x)*p, my = a.y + (b.y-a.y)*p - Math.sin(p*Math.PI)*Math.min(120, Math.hypot(b.x-a.x,b.y-a.y)*0.22);
+    // trail
+    ctx.beginPath();
+    for(let i=0;i<=12;i++){
+      const pp = Math.max(0,p - i*0.022);
+      const tx = a.x + (b.x-a.x)*pp, ty = a.y + (b.y-a.y)*pp - Math.sin(pp*Math.PI)*Math.min(120, Math.hypot(b.x-a.x,b.y-a.y)*0.22);
+      i?ctx.lineTo(tx,ty):ctx.moveTo(tx,ty);
+    }
+    ctx.strokeStyle = m.kind==="strategic" ? "rgba(255,77,61,.5)" : "rgba(255,176,32,.45)";
+    ctx.lineWidth = 1.4; ctx.stroke();
+    ctx.beginPath(); ctx.arc(mx,my,2.2,0,7);
+    ctx.fillStyle = m.kind==="strategic" ? "#ff4d3d" : "#ffb020"; ctx.fill();
+  }
+
+  // flashes
+  for(const f of S.flashes){
+    const p = toScreen(f);
+    const k = f.t/f.life;
+    const r = f.max*scale*(0.25+k*0.9);
+    ctx.beginPath(); ctx.arc(p.x,p.y,r,0,7);
+    if(f.kind==="i"){ ctx.strokeStyle="rgba(61,220,151,"+(1-k)*0.8+")"; ctx.lineWidth=1.5; ctx.stroke(); }
+    else if(f.kind==="d"){ ctx.fillStyle="rgba(255,77,61,"+(1-k)*0.18+")"; ctx.fill(); }
+    else { ctx.fillStyle = f.kind==="n" ? "rgba(255,140,60,"+(1-k)*0.35+")" : "rgba(120,180,255,"+(1-k)*0.3+")"; ctx.fill(); }
+  }
+}
+
+// ============================================================ HUD
+function fmt(t){ const m=Math.floor(t/60), s=Math.floor(t%60); return String(m).padStart(2,"0")+":"+String(s).padStart(2,"0"); }
+function updateHUD(){
+  const ph = phaseAt(S.t);
+  document.getElementById("phase").textContent = ph.name;
+  document.getElementById("clock").textContent = fmt(CFG.ROUND - S.t);
+  document.getElementById("mult").textContent = "×"+ph.mult;
+  document.getElementById("escv").textContent = Math.round(S.escalation);
+  document.getElementById("escf").style.width = S.escalation+"%";
+
+  const p = S.player;
+  document.getElementById("ws").textContent = p.strategic;
+  document.getElementById("wt").textContent = p.tactical;
+  document.getElementById("wi").textContent = p.interceptor;
+  document.getElementById("wc").textContent = p.civil;
+  document.getElementById("wcity").textContent = p.nodes.filter(n=>n.alive&&n.type==="city").length;
+  document.getElementById("wcas").textContent = (S.casualties/1e6).toFixed(1)+"M";
+
+  const inc = S.missiles.filter(m=>!m.done && S.countries[m.to.owner].id===p.id).length;
+  document.getElementById("inc").textContent = inc ? "⚠ 来袭 " + inc : "";
+  const h = document.getElementById("hint");
+  if(S.toastT > 0) S.toastT -= 0.016;
+  if(S.toastT > 0){ h.textContent = S.toast; h.className = "hot"; }
+  document.querySelectorAll(".sp").forEach(el=>{
+    el.style.color = (+el.dataset.s === S.speed) ? "#ff4d3d" : "#5a6472";
+  });
+  renderBar();
+}
+
+let lastBarKey = "";
+function renderBar(){
+  const bar = document.getElementById("bar");
+  const p = S.player;
+  const key = [p.strategic, p.tactical, S.sel].join("|");
+  if(key === lastBarKey) return;
+  lastBarKey = key;
+  bar.innerHTML = "";
+  const items = [
+    {k:"tactical",  n:"战术弹", d:"20kt · 35s · 600km", cnt:p.tactical},
+    {k:"strategic", n:"战略弹", d:"400kt · 90s · 可拦截", cnt:p.strategic}
+  ];
+  for(const it of items){
+    const d = document.createElement("div");
+    d.className = "wbtn" + (S.sel===it.k?" sel":"") + (it.cnt<=0?" dis":"");
+    d.innerHTML = "<b>"+it.n+" ×"+it.cnt+"</b><span>"+it.d+"</span>";
+    d.onclick = ()=>{ S.sel = S.sel===it.k ? null : it.k; lastBarKey=""; };
+    bar.appendChild(d);
+  }
+}
+
+document.querySelectorAll(".sp").forEach(el=>{
+  el.onclick = ()=>{ S.speed = +el.dataset.s; };
+});
+
+// ============================================================ INPUT
+const TYPE_CN = {city:"城市", military:"军事基地", industry:"工业"};
+cv.addEventListener("mousemove", ev=>{
+  const tip = document.getElementById("tip");
+  if(!S.running){ tip.style.display="none"; return; }
+  const r = cv.getBoundingClientRect();
+  const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+  let best=null, bd=1e9;
+  for(const c of S.countries) for(const n of c.nodes){
+    if(!n.alive) continue;
+    const p = toScreen(n.pos); const d = Math.hypot(p.x-mx, p.y-my);
+    if(d < bd){ bd=d; best={n,c}; }
+  }
+  if(!best || bd > 16){ tip.style.display="none"; return; }
+  const n = best.n, c = best.c;
+  const d = Math.round(dist(S.player.pos, n.pos));
+  const reach = d <= CFG.RANGE.tactical ? "战术可达" : "仅战略可达";
+  tip.style.display = "block";
+  tip.style.left = (mx+14)+"px"; tip.style.top = (my+14)+"px";
+  tip.innerHTML = "<b>"+c.name+"</b> · "+TYPE_CN[n.type]+
+    (n.type==="city" ? " · 人口 "+(n.pop/1e6).toFixed(1)+"M" : "") +
+    "<br><span style='color:#5a6472'>"+d+" km · "+reach+"</span>";
+});
+
+cv.addEventListener("mouseleave", ()=>{ document.getElementById("tip").style.display="none"; });
+
+cv.addEventListener("click", ev=>{
+  if(!S.running || S.ended || !S.sel) return;
+  const r = cv.getBoundingClientRect();
+  const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+
+  let best=null, bd=1e9;
+  for(const c of S.countries){
+    if(c.id === S.player.id) continue;
+    for(const n of c.nodes){
+      if(!n.alive) continue;
+      const p = toScreen(n.pos);
+      const d = Math.hypot(p.x-mx, p.y-my);
+      if(d < bd){ bd=d; best=n; }
+    }
+  }
+  if(!best || bd > 26) return;
+  const err = fire(S.player, best, S.sel);
+  const hint = document.getElementById("hint");
+  if(err){ hint.textContent = "✕ " + err; hint.className = "hot"; }
+  else { hint.textContent = "已发射"; hint.className = "dim"; }
+  lastBarKey = "";
+});
+
+// ============================================================ FLOW
+function startRound(N, preset){
+  S.N = N; S.preset = preset;
+  S.t = 0; S.last = 0; S.escalation = 0; S.casualties = 0;
+  S.missiles = []; S.flashes = []; S.sel = null; S.ended = false; S.started = true;
+  genWorld(N, preset);
+  document.getElementById("modal").classList.add("hide");
+  lastBarKey = "";
+  S.running = true;
+  S.raf = requestAnimationFrame(tick);
+}
+
+function endRound(){
+  S.running = false; S.ended = true;
+  cancelAnimationFrame(S.raf);
+  document.getElementById("bar").innerHTML = "";
+  document.getElementById("tip").style.display = "none";
+  render();
+
+  const alive = S.countries.filter(c=>c.alive);
+  const me = S.player;
+  let rank = 1;
+  for(const c of S.countries) if(c.alive && c.id!==me.id) rank++;
+  const ratio = S.casualties / (S.countries.reduce((a,c)=>a+c.nodes.filter(n=>n.type==="city").reduce((b,n)=>b+n.pop,0),0));
+
+  document.getElementById("card").innerHTML =
+    "<h1>" + (me.alive ? (alive.length<=1 ? "你活下来了" : "你的国家存在") : "你的国家已毁灭") + "</h1>" +
+    "<h2>全球升级值收于 " + Math.round(S.escalation) + " · 幸存国家 " + alive.length + "/" + S.countries.length + "</h2>" +
+    "<table>" +
+      "<tr><td>全球伤亡</td><td>" + (S.casualties/1e6).toFixed(1) + " M</td></tr>" +
+      "<tr><td>人类损失比例</td><td>" + (ratio*100).toFixed(1) + " %</td></tr>" +
+      "<tr><td>你的城市</td><td>" + me.nodes.filter(n=>n.type==="city"&&n.alive).length + " / 2</td></tr>" +
+      "<tr><td>你的残余弹头</td><td>" + (me.strategic+me.tactical) + "</td></tr>" +
+    "</table>" +
+    "<button id='go'>再来一局</button>";
+  document.getElementById("modal").classList.remove("hide");
+  document.getElementById("go").onclick = showMenu;
+}
+
+// ============================================================ MENU
+function showMenu(){
+  S.running = false; S.ended = false;
+  cancelAnimationFrame(S.raf);
+  const card = document.getElementById("card");
+  card.innerHTML =
+    "<h1>核战 · 10 分钟</h1>" +
+    "<h2>MVP 试玩版 · 300 秒部署 + 核交换 + 结算</h2>" +
+    "<div class='row' id='rowN'>" +
+      [2,4,8].map(n=>"<div class='opt"+(n===8?" sel":"")+"' data-n='"+n+"'>"+n+" 国<small>"+ (n===8?"标准":"小图") +"</small></div>").join("") +
+    "</div>" +
+    "<div class='row' id='rowP'>" +
+      Object.entries(CFG.PRESETS).map(([k,v])=>"<div class='opt"+(k==="balanced"?" sel":"")+"' data-p='"+k+"'>"+v.label+"<small>"+v.desc+"</small></div>").join("") +
+    "</div>" +
+    "<button id='go'>开始</button>";
+
+  card.querySelectorAll("#rowN .opt").forEach(el=>el.onclick=()=>{
+    card.querySelectorAll("#rowN .opt").forEach(x=>x.classList.remove("sel"));
+    el.classList.add("sel"); S.N = +el.dataset.n;
+  });
+  card.querySelectorAll("#rowP .opt").forEach(el=>el.onclick=()=>{
+    card.querySelectorAll("#rowP .opt").forEach(x=>x.classList.remove("sel"));
+    el.classList.add("sel"); S.preset = el.dataset.p;
+  });
+  document.getElementById("go").onclick = ()=> startRound(S.N, S.preset);
+  document.getElementById("modal").classList.remove("hide");
+}
+
+showMenu();
+</script>
+</body>
+</html>
